@@ -1,1 +1,621 @@
+import React, { useState, useEffect, useCallback } from "react";
+import { Sparkles, Home, MessageCircle, User, ChevronRight } from "lucide-react";
 
+// ---------- Data ----------
+
+const SIGNS = [
+  { name: "Aries", start: [3, 21], end: [4, 19] },
+  { name: "Taurus", start: [4, 20], end: [5, 20] },
+  { name: "Gemini", start: [5, 21], end: [6, 20] },
+  { name: "Cancer", start: [6, 21], end: [7, 22] },
+  { name: "Leo", start: [7, 23], end: [8, 22] },
+  { name: "Virgo", start: [8, 23], end: [9, 22] },
+  { name: "Libra", start: [9, 23], end: [10, 22] },
+  { name: "Scorpio", start: [10, 23], end: [11, 21] },
+  { name: "Sagittarius", start: [11, 22], end: [12, 21] },
+  { name: "Capricorn", start: [12, 22], end: [1, 19] },
+  { name: "Aquarius", start: [1, 20], end: [2, 18] },
+  { name: "Pisces", start: [2, 19], end: [3, 20] },
+];
+
+function getSunSign(month, day) {
+  for (const s of SIGNS) {
+    const [sm, sd] = s.start;
+    const [em, ed] = s.end;
+    if (sm === em) {
+      if (month === sm && day >= sd && day <= ed) return s.name;
+    } else if (sm > em) {
+      if ((month === sm && day >= sd) || (month === em && day <= ed)) return s.name;
+    } else {
+      if ((month === sm && day >= sd) || (month === em && day <= ed) || (month > sm && month < em)) return s.name;
+    }
+  }
+  return "Aries";
+}
+
+const READINGS = {
+  default: [
+    "A conversation today carries more weight than it seems. Say the honest thing.",
+    "Your instincts are sharper than your plans right now. Follow the instinct.",
+    "Something you've been avoiding becomes easier to face after 3pm.",
+    "A small win today sets up a bigger one this week. Notice it when it happens.",
+    "Someone from your past resurfaces, in thought if not in person.",
+  ],
+};
+
+const LUCKY_COLORS = [
+  { name: "Deep gold", hex: "#D8A94B" },
+  { name: "Ember rose", hex: "#C2685E" },
+  { name: "Midnight teal", hex: "#3E6E64" },
+  { name: "Dusty violet", hex: "#7D6E9E" },
+  { name: "Bone white", hex: "#EDE6D6" },
+];
+
+function pickForDate(arr, dateKey) {
+  let h = 0;
+  for (let i = 0; i < dateKey.length; i++) h = (h * 31 + dateKey.charCodeAt(i)) % 100000;
+  return arr[h % arr.length];
+}
+
+function dateKey(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function last7Days() {
+  const days = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    days.push(d);
+  }
+  return days;
+}
+
+// loose, hand-placed constellation shape — not a straight row
+const STAR_POS = [
+  { x: 18, y: 54 },
+  { x: 55, y: 22 },
+  { x: 95, y: 46 },
+  { x: 138, y: 14 },
+  { x: 178, y: 42 },
+  { x: 218, y: 20 },
+  { x: 258, y: 50 },
+];
+
+const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
+
+// ---------- Storage ----------
+
+async function loadData() {
+  try {
+    const res = await window.storage.get("astro-checkin-profile");
+    return res ? JSON.parse(res.value) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveData(data) {
+  try {
+    await window.storage.set("astro-checkin-profile", JSON.stringify(data));
+  } catch {
+    // non-fatal in a prototype context
+  }
+}
+
+// ---------- Component ----------
+
+export default function AstroCheckin() {
+  const [loaded, setLoaded] = useState(false);
+  const [profile, setProfile] = useState(null); // { name, sign, history: [dateKey,...] }
+  const [nameInput, setNameInput] = useState("");
+  const [dobInput, setDobInput] = useState("");
+  const [revealed, setRevealed] = useState(false);
+  const [reading, setReading] = useState(null);
+  const [showUpsell, setShowUpsell] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const data = await loadData();
+      if (data) {
+        setProfile(data);
+        const today = dateKey(new Date());
+        setRevealed(data.history.includes(today));
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const handleOnboard = useCallback(async () => {
+    if (!nameInput.trim() || !dobInput) return;
+    const d = new Date(dobInput);
+    const sign = getSunSign(d.getMonth() + 1, d.getDate());
+    const data = { name: nameInput.trim(), sign, history: [] };
+    setProfile(data);
+    await saveData(data);
+  }, [nameInput, dobInput]);
+
+  const handleReveal = useCallback(async () => {
+    if (!profile) return;
+    const today = dateKey(new Date());
+    const line = pickForDate(READINGS.default, today + profile.sign);
+    const color = pickForDate(LUCKY_COLORS, today + "color");
+    const number = (Math.abs(
+      today.split("").reduce((a, c) => a + c.charCodeAt(0), 0)
+    ) % 9) + 1;
+
+    setReading({ line, color, number });
+    setShowUpsell((today.charCodeAt(9) % 3) === 0);
+    setRevealed(true);
+
+    const history = profile.history.includes(today)
+      ? profile.history
+      : [...profile.history, today];
+    const updated = { ...profile, history };
+    setProfile(updated);
+    await saveData(updated);
+  }, [profile]);
+
+  if (!loaded) return null;
+
+  const days = last7Days();
+  const todayKey = dateKey(new Date());
+  const filledKeys = new Set(profile?.history || []);
+  const streak = (() => {
+    if (!profile) return 0;
+    let count = 0;
+    let d = new Date();
+    while (filledKeys.has(dateKey(d))) {
+      count++;
+      d.setDate(d.getDate() - 1);
+    }
+    return count;
+  })();
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const dateLabel = new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#0B0E1C",
+        fontFamily: "'Inter', sans-serif",
+        padding: "32px 16px",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+        * { box-sizing: border-box; }
+        .phone-frame {
+          animation: rise 0.6s ease-out both;
+        }
+        @keyframes rise {
+          from { opacity: 0; transform: translateY(16px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .twinkle { animation: tw 4s ease-in-out infinite; }
+        @keyframes tw {
+          0%, 100% { opacity: 0.35; }
+          50% { opacity: 0.9; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .phone-frame, .twinkle { animation: none !important; }
+        }
+        input:focus, button:focus-visible {
+          outline: 2px solid #D8A94B;
+          outline-offset: 2px;
+        }
+      `}</style>
+
+      <div
+        className="phone-frame"
+        style={{
+          width: 360,
+          maxWidth: "100%",
+          borderRadius: 36,
+          border: "8px solid #171B2E",
+          background: "linear-gradient(180deg, #12162B 0%, #0D1024 100%)",
+          boxShadow: "0 30px 60px rgba(0,0,0,0.5)",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        {/* ambient stars */}
+        {[...Array(24)].map((_, i) => {
+          const seed = (i * 47) % 360;
+          const top = (i * 37) % 100;
+          const left = (i * 71) % 100;
+          const twinkling = i % 8 === 0;
+          return (
+            <div
+              key={i}
+              className={twinkling ? "twinkle" : ""}
+              style={{
+                position: "absolute",
+                top: `${top}%`,
+                left: `${left}%`,
+                width: 2,
+                height: 2,
+                borderRadius: "50%",
+                background: "#EDE6D6",
+                opacity: 0.25 + (seed % 40) / 100,
+                pointerEvents: "none",
+              }}
+            />
+          );
+        })}
+
+        <div style={{ position: "relative", padding: "28px 22px 90px", minHeight: 560 }}>
+          {!profile ? (
+            <Onboarding
+              nameInput={nameInput}
+              setNameInput={setNameInput}
+              dobInput={dobInput}
+              setDobInput={setDobInput}
+              onSubmit={handleOnboard}
+            />
+          ) : (
+            <>
+              <div style={{ marginBottom: 22 }}>
+                <p style={{ color: "#8A90B8", fontSize: 13, margin: 0, letterSpacing: 0.3 }}>
+                  {dateLabel}
+                </p>
+                <h1
+                  style={{
+                    fontFamily: "'Fraunces', serif",
+                    fontWeight: 600,
+                    fontSize: 26,
+                    color: "#F2EFE6",
+                    margin: "4px 0 0",
+                  }}
+                >
+                  {greeting}, {profile.name}
+                </h1>
+                <p style={{ color: "#6E749A", fontSize: 13, margin: "4px 0 0" }}>
+                  {profile.sign} · check-in streak
+                </p>
+              </div>
+
+              <Constellation days={days} filledKeys={filledKeys} />
+
+              <p
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  color: "#D8A94B",
+                  fontSize: 13,
+                  marginTop: 14,
+                  marginBottom: 26,
+                  letterSpacing: 0.5,
+                }}
+              >
+                {streak} day{streak === 1 ? "" : "s"} in a row
+              </p>
+
+              {!revealed ? (
+                <button
+                  onClick={handleReveal}
+                  style={{
+                    width: "100%",
+                    padding: "16px",
+                    borderRadius: 16,
+                    border: "none",
+                    background: "linear-gradient(135deg, #D8A94B, #C2685E)",
+                    color: "#171225",
+                    fontWeight: 600,
+                    fontSize: 15,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Sparkles size={18} />
+                  Reveal today's reading
+                </button>
+              ) : (
+                <ReadingCard sign={profile.sign} reading={reading} showUpsell={showUpsell} />
+              )}
+            </>
+          )}
+        </div>
+
+        {profile && <BottomNav />}
+      </div>
+    </div>
+  );
+}
+
+function Onboarding({ nameInput, setNameInput, dobInput, setDobInput, onSubmit }) {
+  return (
+    <div style={{ paddingTop: 40 }}>
+      <p style={{ color: "#8A90B8", fontSize: 13, margin: 0 }}>Welcome to</p>
+      <h1
+        style={{
+          fontFamily: "'Fraunces', serif",
+          fontStyle: "italic",
+          fontWeight: 500,
+          fontSize: 32,
+          color: "#F2EFE6",
+          margin: "4px 0 28px",
+        }}
+      >
+        Daily Check-in
+      </h1>
+      <p style={{ color: "#8A90B8", fontSize: 14, lineHeight: 1.6, marginBottom: 28 }}>
+        One reading a day. Watch your own constellation take shape as you return.
+      </p>
+
+      <label style={{ color: "#6E749A", fontSize: 12, display: "block", marginBottom: 6 }}>
+        Your name
+      </label>
+      <input
+        value={nameInput}
+        onChange={(e) => setNameInput(e.target.value)}
+        placeholder="Yash"
+        style={{
+          width: "100%",
+          padding: "12px 14px",
+          borderRadius: 12,
+          border: "1px solid #2A2F4A",
+          background: "#171B30",
+          color: "#F2EFE6",
+          fontSize: 14,
+          marginBottom: 18,
+        }}
+      />
+
+      <label style={{ color: "#6E749A", fontSize: 12, display: "block", marginBottom: 6 }}>
+        Date of birth
+      </label>
+      <input
+        type="date"
+        value={dobInput}
+        onChange={(e) => setDobInput(e.target.value)}
+        style={{
+          width: "100%",
+          padding: "12px 14px",
+          borderRadius: 12,
+          border: "1px solid #2A2F4A",
+          background: "#171B30",
+          color: "#F2EFE6",
+          fontSize: 14,
+          marginBottom: 28,
+          colorScheme: "dark",
+        }}
+      />
+
+      <button
+        onClick={onSubmit}
+        style={{
+          width: "100%",
+          padding: "16px",
+          borderRadius: 16,
+          border: "none",
+          background: "linear-gradient(135deg, #D8A94B, #C2685E)",
+          color: "#171225",
+          fontWeight: 600,
+          fontSize: 15,
+          cursor: "pointer",
+        }}
+      >
+        Begin
+      </button>
+    </div>
+  );
+}
+
+function Constellation({ days, filledKeys }) {
+  const filledIdx = days.map((d) => filledKeys.has(dateKey(d)));
+  const segments = [];
+  for (let i = 0; i < STAR_POS.length - 1; i++) {
+    if (filledIdx[i] && filledIdx[i + 1]) segments.push(i);
+  }
+
+  return (
+    <div>
+      <svg viewBox="0 0 276 80" width="100%" height="80">
+        {segments.map((i) => (
+          <line
+            key={i}
+            x1={STAR_POS[i].x}
+            y1={STAR_POS[i].y}
+            x2={STAR_POS[i + 1].x}
+            y2={STAR_POS[i + 1].y}
+            stroke="#D8A94B"
+            strokeWidth="1"
+            opacity="0.55"
+          />
+        ))}
+        {STAR_POS.map((p, i) => (
+          <circle
+            key={i}
+            cx={p.x}
+            cy={p.y}
+            r={filledIdx[i] ? 5 : 3.5}
+            fill={filledIdx[i] ? "#D8A94B" : "transparent"}
+            stroke={filledIdx[i] ? "none" : "#3D4266"}
+            strokeWidth="1.2"
+          />
+        ))}
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "0 2px" }}>
+        {days.map((d, i) => (
+          <span
+            key={i}
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 10,
+              color: filledIdx[i] ? "#D8A94B" : "#4B5078",
+            }}
+          >
+            {DAY_LETTERS[d.getDay()]}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReadingCard({ sign, reading, showUpsell }) {
+  if (!reading) return null;
+  return (
+    <div
+      style={{
+        background: "#161A32",
+        border: "1px solid #262B4A",
+        borderRadius: 18,
+        padding: 20,
+      }}
+    >
+      <p
+        style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 11,
+          color: "#6E749A",
+          margin: 0,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+        }}
+      >
+        {sign} · today
+      </p>
+      <p
+        style={{
+          fontFamily: "'Fraunces', serif",
+          fontSize: 17,
+          lineHeight: 1.5,
+          color: "#F2EFE6",
+          margin: "10px 0 18px",
+        }}
+      >
+        {reading.line}
+      </p>
+
+      <div style={{ display: "flex", gap: 20, marginBottom: showUpsell ? 18 : 0 }}>
+        <div>
+          <p style={{ fontSize: 10, color: "#6E749A", margin: "0 0 6px", letterSpacing: 0.5 }}>
+            LUCKY COLOR
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                background: reading.color.hex,
+                display: "inline-block",
+              }}
+            />
+            <span style={{ fontSize: 13, color: "#F2EFE6" }}>{reading.color.name}</span>
+          </div>
+        </div>
+        <div>
+          <p style={{ fontSize: 10, color: "#6E749A", margin: "0 0 6px", letterSpacing: 0.5 }}>
+            LUCKY NUMBER
+          </p>
+          <span
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 15,
+              color: "#F2EFE6",
+            }}
+          >
+            {reading.number}
+          </span>
+        </div>
+      </div>
+
+      {showUpsell && (
+        <div
+          style={{
+            background: "rgba(194,104,94,0.12)",
+            border: "1px solid rgba(194,104,94,0.35)",
+            borderRadius: 14,
+            padding: 14,
+          }}
+        >
+          <p style={{ fontSize: 13, color: "#E8C9C6", margin: "0 0 10px", lineHeight: 1.5 }}>
+            Mercury's shift touches your career house today.
+          </p>
+          <button
+            style={{
+              width: "100%",
+              padding: "10px",
+              borderRadius: 10,
+              border: "none",
+              background: "#C2685E",
+              color: "#171225",
+              fontWeight: 600,
+              fontSize: 13,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              cursor: "pointer",
+            }}
+          >
+            Talk to an astrologer
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BottomNav() {
+  const [active, setActive] = useState("home");
+  const items = [
+    { key: "home", label: "Home", Icon: Home },
+    { key: "chat", label: "Chat", Icon: MessageCircle },
+    { key: "profile", label: "Profile", Icon: User },
+  ];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "space-around",
+        padding: "14px 0 18px",
+        background: "rgba(11,14,28,0.9)",
+        borderTop: "1px solid #1E2340",
+        backdropFilter: "blur(6px)",
+      }}
+    >
+      {items.map(({ key, label, Icon }) => (
+        <button
+          key={key}
+          onClick={() => setActive(key)}
+          style={{
+            background: "none",
+            border: "none",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 4,
+            cursor: "pointer",
+            color: active === key ? "#D8A94B" : "#4B5078",
+          }}
+        >
+          <Icon size={20} />
+          <span style={{ fontSize: 10 }}>{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
